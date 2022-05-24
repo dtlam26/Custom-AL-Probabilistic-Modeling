@@ -105,10 +105,16 @@ if not os.path.exists(args.eval_save_folder):
     os.mkdir(args.eval_save_folder)
 
 
-def create_loaders():
+def create_loaders(predefine_set=[]):
     num_train_images = cfg['num_total_images']
-    indices = list(range(num_train_images))
-    random.shuffle(indices)
+    if predefine_set:
+        indices = predefine_set
+        by_key = True
+    else:
+        indices = list(range(num_train_images))
+        random.shuffle(indices)
+        by_key = False
+
     labeled_set = indices[:cfg['num_initial_labeled_set']]
     unlabeled_set = indices[cfg['num_initial_labeled_set']:]
 
@@ -118,9 +124,9 @@ def create_loaders():
                                             BaseTransform(300, MEANS),
                                             VOCAnnotationTransform())
     else:
-        supervised_dataset = COCODetection(root=args.coco_root, transform=SSDAugmentation(cfg['min_dim'], MEANS))
+        supervised_dataset = COCODetection(root=args.coco_root, transform=SSDAugmentation(cfg['min_dim'], MEANS), by_key=by_key)
         unsupervised_dataset = COCODetection(args.coco_root,
-                                             transform=BaseTransform(300, MEANS))
+                                             transform=BaseTransform(300, MEANS), by_key=by_key)
 
     supervised_data_loader = data.DataLoader(supervised_dataset, batch_size=args.batch_size,
                                              num_workers=args.num_workers,
@@ -182,7 +188,7 @@ def weights_init(m):
 
 
 def load_net_optimizer_multi(cfg):
-    net = build_ssd_gmm('train', cfg['min_dim'], cfg['num_classes'])
+    net = build_ssd_gmm('train', cfg['min_dim'], cfg['num_classes'], vgg_on=False)
 
     if args.resume:
         print('Resuming training, loading {}...'.format(args.resume))
@@ -278,12 +284,22 @@ def train(
             finish_flag = False
     return net
 
+def load_keys(json_set_path='sample_ood.json'):
+    with open(json_set_path,'rb') as f:
+        return json.load(f)['selected_indexes']
+
 def main():
     if args.cuda:
         cudnn.benchmark = True
     print(args)
-    supervised_dataset, supervised_data_loader, unsupervised_dataset, unsupervised_data_loader, indices, labeled_set, unlabeled_set = create_loaders()
+    fix_set = True
+    if fix_set:
+        predefine_set = load_keys()
+    else:
+        predefine_set = []
+    supervised_dataset, supervised_data_loader, unsupervised_dataset, unsupervised_data_loader, indices, labeled_set, unlabeled_set = create_loaders(predefine_set)
     criterion = MultiBoxLoss_GMM(cfg['num_classes'], 0.5, True, 0, True, 3, 0.5, False, args.cuda)
+
     print(len(labeled_set), len(unlabeled_set))
     net = train(labeled_set, supervised_data_loader, indices, cfg, criterion)
 
@@ -317,6 +333,9 @@ def main():
             print('loading best weight {}...'.format(best_weight))
             net.load_state_dict(torch.load(best_weight))
 
+        if fix_set and i == 0:
+            unlabeled_set = predefine_set[cfg['num_initial_labeled_set']*(i+1):]
+
         net.eval()
         batch_iterator = iter(unsupervised_data_loader)
         labeled_set, unlabeled_set = active_learning_cycle(
@@ -336,6 +355,9 @@ def main():
             f.write("\n")
         f.close()
 
+
+        if fix_set and i<cfg['num_cycles']-1:
+            unlabeled_set = predefine_set[cfg['num_initial_labeled_set']*(i+2):]
         # change the loaders
         supervised_data_loader, unsupervised_data_loader = change_loaders(supervised_dataset, unsupervised_dataset, labeled_set, unlabeled_set)
         print(len(labeled_set), len(unlabeled_set))

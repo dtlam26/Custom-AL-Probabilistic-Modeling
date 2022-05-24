@@ -86,7 +86,8 @@ class COCODetection(data.Dataset):
     """
 
     def __init__(self, root, image_set='train2014', transform=None,
-                 target_transform=COCOAnnotationTransform(), dataset_name='MS COCO'):
+                 target_transform=COCOAnnotationTransform(), dataset_name='MS COCO', by_key=True):
+        self.by_key = by_key
         sys.path.append(osp.join(root, COCO_API))
         from pycocotools.coco import COCO
         self.root = osp.join(root, IMAGES, image_set)
@@ -119,7 +120,10 @@ class COCODetection(data.Dataset):
             tuple: Tuple (image, target, height, width).
                    target is the object returned by ``coco.loadAnns``.
         """
-        img_id = self.ids[index]
+        if self.by_key:
+            img_id = str(index)
+        else:
+            img_id = self.ids[index]
         target = self.coco.imgToAnns[img_id]
         ann_ids = self.coco.getAnnIds(imgIds=img_id)
 
@@ -151,7 +155,10 @@ class COCODetection(data.Dataset):
         Return:
             cv2 img
         '''
-        img_id = self.ids[index]
+        if self.by_key:
+            img_id = str(index)
+        else:
+            img_id = self.ids[index]
         path = self.coco.loadImgs(img_id)[0]['file_name']
         return cv2.imread(osp.join(self.root, path), cv2.IMREAD_COLOR)
 
@@ -167,7 +174,10 @@ class COCODetection(data.Dataset):
             list:  [img_id, [(label, bbox coords),...]]
                 eg: ('001718', [('dog', (96, 13, 438, 332))])
         '''
-        img_id = self.ids[index]
+        if self.by_key:
+            img_id = str(index)
+        else:
+            img_id = self.ids[index]
         ann_ids = self.coco.getAnnIds(imgIds=img_id)
         return self.coco.loadAnns(ann_ids)
 

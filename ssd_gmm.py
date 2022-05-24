@@ -14,6 +14,8 @@ from torch.autograd import Variable
 from layers import *
 from data import voc300, voc512, coco
 import os
+import torch
+
 
 
 class SSD_GMM(nn.Module):
@@ -34,8 +36,9 @@ class SSD_GMM(nn.Module):
         head: "multibox head" consists of loc and conf conv layers
     """
 
-    def __init__(self, phase, size, base, extras, head, num_classes):
+    def __init__(self, phase, size, base, extras, head, num_classes, first_extractor_index):
         super(SSD_GMM, self).__init__()
+        self.first_extractor_index = first_extractor_index
         self.phase = phase
         self.num_classes = num_classes
         if(size==300):
@@ -48,7 +51,9 @@ class SSD_GMM(nn.Module):
         self.size = size
 
         # SSD network
+
         self.vgg = nn.ModuleList(base)
+
         # Layer learns to scale the l2 normalized features from conv4_3
         self.L2Norm = L2Norm(512, 20)
         self.extras = nn.ModuleList(extras)
@@ -131,14 +136,17 @@ class SSD_GMM(nn.Module):
         conf_pi_4 = list()
 
         # apply vgg up to conv4_3 relu
-        for k in range(23):
+        # 23 layers
+        for k in range(self.first_extractor_index):
             x = self.vgg[k](x)
 
+        #norm at 1st extractor branch
         s = self.L2Norm(x)
         sources.append(s)
 
         # apply vgg up to fc7
-        for k in range(23, len(self.vgg)):
+        #add 2nd extractor branch
+        for k in range(self.first_extractor_index, len(self.vgg)):
             x = self.vgg[k](x)
         sources.append(x)
 
@@ -361,6 +369,14 @@ def vgg(cfg, i, batch_norm=False):
                nn.ReLU(inplace=True), conv7, nn.ReLU(inplace=True)]
     return layers
 
+def mobile_net(filter_shape=1028):
+    model = torch.hub.load('pytorch/vision:v0.10.0', 'mobilenet_v2', pretrained=False)
+    select_layer = remove_batchnorm(model.features)
+    select_layer.extend(
+        [nn.Conv2d(filter_shape, filter_shape, kernel_size=1, stride=1, bias=False),
+        nn.ReLU6(inplace=True)]
+    )
+    return select_layer
 
 def add_extras(cfg, i, batch_norm=False):
     # Extra layers added to VGG for feature scaling
@@ -381,6 +397,15 @@ def add_extras(cfg, i, batch_norm=False):
         in_channels = v
     return layers
 
+def remove_batchnorm(group_layers):
+    layers = []
+    for group in list(group_layers.children()):
+        if len(list(group.children())) > 0:
+            layers.extend(remove_batchnorm(group))
+        else:
+            if not isinstance(group,nn.BatchNorm2d):
+                layers.append(group)
+    return layers
 
 def multibox(vgg, extra_layers, cfg, num_classes):
     vgg_source = [21, -2]
@@ -485,13 +510,22 @@ mbox = {
 }
 
 
-def build_ssd_gmm(phase, size=300, num_classes=21):
+def build_ssd_gmm(phase, size=300, num_classes=21, vgg_on=True):
     if phase != "test" and phase != "train":
         print("ERROR: Phase: " + phase + " not recognized")
         return
 
-    base_, extras_, head_ = multibox(vgg(base[str(size)], 3),
-                                     add_extras(extras[str(size)], 1024),
+    if vgg_on:
+        last_layer = 1024
+        first_extractor_index = 23
+        model_list = vgg(base[str(size)], 3)
+    else:
+        last_layer = 1028
+        first_extractor_index = 73
+        model_list = mobile_net(last_layer)
+
+    base_, extras_, head_ = multibox(model_list,
+                                     add_extras(extras[str(size)], ),
                                      mbox[str(size)], num_classes)
 
-    return SSD_GMM(phase, size, base_, extras_, head_, num_classes)
+    return SSD_GMM(phase, size, base_, extras_, head_, num_classes, first_extractor_index)
