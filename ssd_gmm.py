@@ -17,7 +17,6 @@ import os
 import torch
 
 
-
 class SSD_GMM(nn.Module):
     """Single Shot Multibox Architecture
     The network is composed of a base VGG network followed by the
@@ -55,7 +54,10 @@ class SSD_GMM(nn.Module):
         self.vgg = nn.ModuleList(base)
 
         # Layer learns to scale the l2 normalized features from conv4_3
-        self.L2Norm = L2Norm(512, 20)
+        if first_extractor_index:
+            self.L2Norm = L2Norm(512, 20)
+        else:
+            self.L2Norm = L2Norm(960, 20)
         self.extras = nn.ModuleList(extras)
 
         # localization GMM parameters
@@ -373,7 +375,7 @@ def mobile_net(filter_shape=1028):
     model = torch.hub.load('pytorch/vision:v0.10.0', 'mobilenet_v2', pretrained=False)
     select_layer = remove_batchnorm(model.features)
     select_layer.extend(
-        [nn.Conv2d(filter_shape, filter_shape, kernel_size=1, stride=1, bias=False),
+        [nn.Conv2d(filter_shape, filter_shape, kernel_size=1, bias=False),
         nn.ReLU6(inplace=True)]
     )
     return select_layer
@@ -525,7 +527,7 @@ def build_ssd_gmm(phase, size=300, num_classes=21, vgg_on=True):
         model_list = mobile_net(last_layer)
 
     base_, extras_, head_ = multibox(model_list,
-                                     add_extras(extras[str(size)], ),
+                                     add_extras(extras[str(size)], last_layer),
                                      mbox[str(size)], num_classes)
 
     return SSD_GMM(phase, size, base_, extras_, head_, num_classes, first_extractor_index)

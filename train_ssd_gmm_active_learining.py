@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-
+import json
 from data import *
 from utils.augmentations import SSDAugmentation
 from layers.modules import MultiBoxLoss_GMM
@@ -195,16 +195,17 @@ def load_net_optimizer_multi(cfg):
         net = nn.DataParallel(net)
         net.load_state_dict(torch.load(args.resume))
     else:
-        vgg_weights = torch.load(args.save_folder + args.basenet)
-        print('Loading base network...')
-        net.vgg.load_state_dict(vgg_weights)
-    if not args.resume:
-        print('Initializing weights...')
-        # initialize newly added layers' weights with xavier method
-        net.extras.apply(weights_init)
-        net.loc_mu_1.apply(weights_init)
-        net.conf_mu_1.apply(weights_init)
-
+        if args.basenet:
+            vgg_weights = torch.load(args.save_folder + args.basenet)
+            print('Loading base network...')
+            net.vgg.load_state_dict(vgg_weights)
+        else:
+            print('Initializing weights...')
+            # initialize newly added layers' weights with xavier method
+            net.extras.apply(weights_init)
+            net.loc_mu_1.apply(weights_init)
+            net.conf_mu_1.apply(weights_init)
+            
     optimizer = optim.SGD(net.parameters(), lr=args.lr,
                           momentum=args.momentum,
                           weight_decay=args.weight_decay)
